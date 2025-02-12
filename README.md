@@ -13,3 +13,7 @@
 ## webhook-git-updater
 
 提供 Git 仓库拉取和更新的 REST 接口的服务以及命令行程序，支持 Git 更新调用 Webhook 更新源码（动态语言或 Clojure 热更新环境下服务实时反应更新），也支持作为 init-container 让容器基于最新代码运行（Clojure 生产环境）。
+
+## oss-res
+
+从 Aliyun OSS 下载部署资源到本地，用于初始化容器，常用于配合 CI 系统的 JRE 镜像的可执行 Jar 包下载。
