@@ -23,7 +23,11 @@ struct Args {
 
     /// Output Dir, Default to .
     #[clap(short, long, default_value = ".")]
-    output: String
+    output: String,
+
+    /// Cache for md5 check
+    #[clap(short, long)]
+    cache: bool,
 }
 
 fn main() -> Result<(), TransferError> {

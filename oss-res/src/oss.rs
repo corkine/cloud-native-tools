@@ -1,3 +1,5 @@
+use core::str;
+use std::fs;
 use std::path::PathBuf;
 use std::{fs::File, path::Path};
 
@@ -8,6 +10,7 @@ use crate::error::TransferError;
 use crate::unzip::unzip_file;
 use crate::Args;
 use aliyun_oss_rust_sdk::oss::OSS;
+use aliyun_oss_rust_sdk::request::RequestBuilder;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 
@@ -61,9 +64,13 @@ fn parse_oss_config_from_str(s: &str) -> Result<OssConfig, TransferError> {
 }
 
 pub fn handle_oss(args: Args, oss_config: OssConfig) -> Result<(), TransferError> {
-    use aliyun_oss_rust_sdk::request::RequestBuilder;
-
     let oss: OSS = oss_config.clone().into();
+
+    if !check_need_download(&oss, &args) {
+        println!("Skipping download of {} as it already exists.", args.file);
+        return Ok(());
+    }
+
     let build = RequestBuilder::new();
 
     let file_name = Path::new(&args.file).file_name().unwrap().to_str().unwrap();
@@ -79,7 +86,8 @@ pub fn handle_oss(args: Args, oss_config: OssConfig) -> Result<(), TransferError
     std::fs::create_dir_all(output_path.parent().unwrap())
         .map_err(|e| TransferError::Other(format!("Failed to create directory: {}", e)))?;
 
-    let mut file = File::create(&output_path).map_err(|e| TransferError::Other(format!("{}", e)))?;
+    let mut file =
+        File::create(&output_path).map_err(|e| TransferError::Other(format!("{}", e)))?;
 
     file.write_all(&download_bin)
         .map_err(|e| TransferError::Other(format!("Failed to write file: {}", e)))?;
@@ -97,12 +105,77 @@ pub fn handle_oss(args: Args, oss_config: OssConfig) -> Result<(), TransferError
 
         unzip_file(&zip_path, &output_dir)?;
 
-        std::fs::remove_file(&zip_path).map_err(|e| TransferError::Other(format!("{}", e)))?;
+        if !args.cache {
+            std::fs::remove_file(&zip_path).map_err(|e| TransferError::Other(format!("{}", e)))?;
+        }
 
         println!("Unzipped {} successfully.", file_name);
     }
 
     Ok(())
+}
+
+fn check_need_download(oss: &OSS, args: &Args) -> bool {
+    if !args.cache {
+        return true;
+    }
+
+    let download_file_name = Path::new(&args.file).file_name().unwrap().to_str().unwrap();
+    let local_path = Path::new(&args.output).join(download_file_name);
+
+    if !fs::metadata(&local_path).is_ok() {
+        return true;
+    }
+
+    match (
+        calculate_local_md5(&local_path.to_str().unwrap()),
+        get_remote_md5(oss, &args.file),
+    ) {
+        (Some(local_md5), Some(remote_md5)) => local_md5 != remote_md5,
+        _ => true,
+    }
+}
+
+fn calculate_local_md5(file_path: &str) -> Option<String> {
+    let mut local_file = fs::File::open(file_path).ok()?;
+    let mut buffer = Vec::new();
+    local_file.read_to_end(&mut buffer).ok()?;
+    let local_md5 = md5::compute(&buffer);
+    Some(format!("{:x}", local_md5))
+}
+
+fn get_remote_md5(oss: &OSS, file: &str) -> Option<String> {
+    let build = RequestBuilder::new();
+    match oss.get_object(format!("{}.md5", file), build) {
+        Ok(response) => {
+            let bytes = response.as_slice();
+            str::from_utf8(bytes).map(|s| s.trim().to_string()).ok()
+        }
+        Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+fn build_config() -> OssConfig {
+    return OssConfig {
+        oss_bucket: "cm-binary".into(),
+        oss_endpoint: "oss-cn-hangzhou.aliyuncs.com".into(),
+        key_id: "xxx".into(),
+        key_secret: "xxx".into(),
+    };
+}
+
+#[test]
+fn file_md5() {
+    let res = calculate_local_md5("temp2/deploy.zip".into());
+    println!("{:?}", res);
+}
+
+#[test]
+fn remote_md5() {
+    let oss: OSS = build_config().clone().into();
+    let res = get_remote_md5(&oss, "/projectA/deploy.zip");
+    println!("{:?}", res);
 }
 
 #[test]
@@ -113,26 +186,15 @@ fn test_handle_oss() {
             file: "/projectA/deploy.zip".into(),
             unzip: true,
             output: ".".into(),
+            cache: true,
         },
-        OssConfig {
-            oss_bucket: "cm-xxx".into(),
-            oss_endpoint: "oss-cn-hangzhou.aliyuncs.com".into(),
-            key_id: "xxx".into(),
-            key_secret: "xxx".into(),
-        },
+        build_config(),
     )
     .unwrap();
 }
 
 #[test]
 fn write_json() {
-    let config = OssConfig {
-        oss_bucket: "cm-xxx".into(),
-        oss_endpoint: "oss-cn-hangzhou.aliyuncs.com".into(),
-        key_id: "xxx".into(),
-        key_secret: "xxx".into(),
-    };
-
-    let json_str = serde_json::to_string(&config).unwrap();
+    let json_str = serde_json::to_string(&build_config()).unwrap();
     println!("{}", json_str);
 }
