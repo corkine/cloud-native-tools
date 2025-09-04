@@ -23,3 +23,7 @@
 ## rclone-me
 
 支持众多云服务商的数据同步工具，在 rclone 的基础上添加了 RCLONE_CONFIG_URL 和 --config_url 支持，可以从远程加载 rclone 配置。
+
+## ci-transfer
+
+将目标环境文件通过 SCP/S3 传送到远程位置并执行命令的工具，用于 CI/CD 环境的构建自动归档、自动触发更新。
